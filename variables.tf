@@ -58,7 +58,7 @@ variable "event_categories" {
 }
 
 variable "evaluation_minutes" {
-  description = "How long a metric must breach before the alarm fires."
+  description = "How many minutes a metric must breach before the alarm fires. A metric that reports every 5 minutes is evaluated per 5-minute period, so the value is rounded up to a whole number of periods, and is never less than one period (5 minutes)."
   type        = number
   default     = 5
 }

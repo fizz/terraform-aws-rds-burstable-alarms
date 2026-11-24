@@ -50,7 +50,7 @@ Each address gets a confirmation email from AWS. Until someone clicks it, the ad
 | `connections` | only if you give `max_connections` | 70% of it |
 | RDS events | `failure`, `recovery`, `low storage`, `failover` | |
 
-Every metric alarm must breach for 5 minutes in a row (`evaluation_minutes`). Low-side alarms use the minimum of each minute and high-side alarms the maximum, so a short dip is not averaged away. A metric that the class or volume does not report counts as fine: a gp3 volume has no `BurstBalance`, and it never pages anyone.
+Every metric alarm must breach for 5 minutes in a row (`evaluation_minutes`). The credit and burst balance alarms use a 5-minute period, because `CPUCreditBalance`, `EBSByteBalance%` and `EBSIOBalance%` publish one datapoint every 5 minutes. The other alarms use a 1-minute period. `evaluation_minutes` is rounded up to a whole number of periods, with a minimum of one: 7 minutes is 7 one-minute periods, or two 5-minute periods (10 minutes) on the balance alarms, and a value below 5 is one 5-minute period on those. Low-side alarms use the minimum of each period and high-side alarms the maximum, so a short dip is not averaged away. A metric that the class or volume does not report counts as fine: a gp3 volume has no `BurstBalance`, and it never pages anyone.
 
 ## Thresholds follow the class
 
@@ -70,6 +70,10 @@ Terraform 1.7 or later and the AWS provider 6.0 or later. The tests run with a m
 terraform init -backend=false
 terraform test
 ```
+
+## Changes in 0.1.1
+
+In 0.1.0 every alarm used a 60-second period, so `CPUCreditBalance`, `EBSByteBalance%` and `EBSIOBalance%`, which report every 5 minutes, had four empty periods in five. Empty periods count as healthy, so those three alarms could miss a real breach. They now use a 5-minute period, and so does `BurstBalance`. Inputs, outputs, alarm names and thresholds are the same, and an upgrade is an in-place change to those four alarms.
 
 ## License
 
