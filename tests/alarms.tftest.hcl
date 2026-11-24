@@ -172,3 +172,76 @@ run "given_topic_creates_no_topic" {
     error_message = "Alarms publish to the given topic."
   }
 }
+
+run "balance_alarms_use_a_five_minute_period" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for k in ["cpu-credit-balance", "ebs-byte-balance", "ebs-io-balance", "storage-burst-balance"] :
+      aws_cloudwatch_metric_alarm.this[k].period == 300
+    ])
+    error_message = "The credit and burst balance alarms use a 5-minute period."
+  }
+
+  assert {
+    condition = alltrue([
+      for k in ["freeable-memory", "swap-usage"] :
+      aws_cloudwatch_metric_alarm.this[k].period == 60
+    ])
+    error_message = "The other metrics keep a 60-second period."
+  }
+
+  assert {
+    condition = alltrue([
+      for k in ["cpu-credit-balance", "ebs-byte-balance", "ebs-io-balance", "storage-burst-balance"] :
+      aws_cloudwatch_metric_alarm.this[k].evaluation_periods == 1 && aws_cloudwatch_metric_alarm.this[k].datapoints_to_alarm == 1
+    ])
+    error_message = "The default 5 minutes is one 5-minute period."
+  }
+
+  assert {
+    condition = alltrue([
+      for k in ["freeable-memory", "swap-usage"] :
+      aws_cloudwatch_metric_alarm.this[k].evaluation_periods == 5 && aws_cloudwatch_metric_alarm.this[k].datapoints_to_alarm == 5
+    ])
+    error_message = "The default 5 minutes is five 1-minute periods."
+  }
+}
+
+run "evaluation_minutes_rounds_up_to_whole_periods" {
+  command = plan
+
+  variables {
+    evaluation_minutes = 7
+    max_connections    = 79
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.this["cpu-credit-balance"].evaluation_periods == 2 && aws_cloudwatch_metric_alarm.this["cpu-credit-balance"].datapoints_to_alarm == 2
+    error_message = "7 minutes on a 5-minute metric is two periods."
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.this["swap-usage"].evaluation_periods == 7 && aws_cloudwatch_metric_alarm.this["connections"].datapoints_to_alarm == 7
+    error_message = "7 minutes on a 1-minute metric is seven periods."
+  }
+}
+
+run "evaluation_minutes_below_one_period_is_one_period" {
+  command = plan
+
+  variables {
+    evaluation_minutes = 1
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.this["ebs-io-balance"].evaluation_periods == 1 && aws_cloudwatch_metric_alarm.this["ebs-io-balance"].datapoints_to_alarm == 1
+    error_message = "A 5-minute metric cannot be evaluated over less than one period."
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.this["freeable-memory"].evaluation_periods == 1
+    error_message = "1 minute on a 1-minute metric is one period."
+  }
+}

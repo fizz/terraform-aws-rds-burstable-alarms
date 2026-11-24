@@ -18,8 +18,12 @@ locals {
   size      = split(".", local.class)[1]
   memory    = data.aws_ec2_instance_type.this.memory_size * 1024 * 1024
   topic_arn = var.alarm_topic_arn != null ? var.alarm_topic_arn : aws_sns_topic.alarms[0].arn
-  period    = 60
   dimension = { DBInstanceIdentifier = local.id }
+
+  # Seconds per evaluation period. A period shorter than a metric's reporting interval
+  # leaves most periods empty, and an empty period counts as healthy.
+  one_minute  = 60
+  five_minute = 300
 
   # CPU credits a burstable class earns per hour. It banks at most 24 hours of them.
   # AWS does not publish these through an API.
@@ -33,30 +37,35 @@ locals {
     {
       freeable-memory = {
         metric      = "FreeableMemory"
+        period      = local.one_minute
         operator    = "LessThanThreshold"
         threshold   = floor(local.memory * var.freeable_memory_percent / 100)
         description = "Free memory is below ${var.freeable_memory_percent}% of ${data.aws_db_instance.this.db_instance_class}. Each connection holds memory, and a small instance runs out of memory long before it runs out of connections."
       }
       swap-usage = {
         metric      = "SwapUsage"
+        period      = local.one_minute
         operator    = "GreaterThanThreshold"
         threshold   = var.swap_usage_bytes
         description = "The instance is swapping, so it is already short of memory."
       }
       ebs-byte-balance = {
         metric      = "EBSByteBalance%"
+        period      = local.five_minute
         operator    = "LessThanThreshold"
         threshold   = var.burst_balance_percent
         description = "The instance's EBS throughput burst is nearly spent. Swapping drains it."
       }
       ebs-io-balance = {
         metric      = "EBSIOBalance%"
+        period      = local.five_minute
         operator    = "LessThanThreshold"
         threshold   = var.burst_balance_percent
         description = "The instance's EBS I/O burst is nearly spent."
       }
       storage-burst-balance = {
         metric      = "BurstBalance"
+        period      = local.five_minute
         operator    = "LessThanThreshold"
         threshold   = var.burst_balance_percent
         description = "The gp2 volume's I/O burst is nearly spent."
@@ -65,6 +74,7 @@ locals {
     local.burstable ? {
       cpu-credit-balance = {
         metric      = "CPUCreditBalance"
+        period      = local.five_minute
         operator    = "LessThanThreshold"
         threshold   = floor(local.max_credits * var.cpu_credit_percent / 100)
         description = "CPU credits are below ${var.cpu_credit_percent}% of the ${local.max_credits} a ${data.aws_db_instance.this.db_instance_class} can bank."
@@ -73,6 +83,7 @@ locals {
     var.max_connections != null ? {
       connections = {
         metric      = "DatabaseConnections"
+        period      = local.one_minute
         operator    = "GreaterThanThreshold"
         threshold   = floor(var.max_connections * var.connections_percent / 100)
         description = "Connections are above ${var.connections_percent}% of max_connections (${var.max_connections})."
@@ -142,9 +153,9 @@ resource "aws_cloudwatch_metric_alarm" "this" {
   metric_name         = each.value.metric
   dimensions          = local.dimension
   statistic           = each.value.operator == "LessThanThreshold" ? "Minimum" : "Maximum"
-  period              = local.period
-  evaluation_periods  = var.evaluation_minutes
-  datapoints_to_alarm = var.evaluation_minutes
+  period              = each.value.period
+  evaluation_periods  = max(1, ceil(var.evaluation_minutes * 60 / each.value.period))
+  datapoints_to_alarm = max(1, ceil(var.evaluation_minutes * 60 / each.value.period))
   comparison_operator = each.value.operator
   threshold           = each.value.threshold
 
