@@ -16,27 +16,25 @@ variable "alarm_emails" {
 }
 
 variable "freeable_memory_percent" {
-  description = "Alarm when free memory stays below this percent of the instance's memory. 10 is about 100 MB on a 1 GiB class."
+  description = "Alarm when free memory stays below this percent of the instance's memory. 10 is about 100 MB on a 1 GiB class. The swap alarm uses the same floor."
   type        = number
   default     = 10
 }
 
-variable "swap_usage_bytes" {
-  description = "Alarm when swap use goes above this many bytes."
-  type        = number
-  default     = 268435456
-}
+variable "minutes_of_warning" {
+  description = "Minutes of warning for each CPU credit, EBS byte, EBS I/O and gp2 burst balance, one alarm for each number: the balance will be at 1% of full or less in that many minutes at its present rate. Numbers up to 60 use a 5-minute rate. Longer ones use the hour's rate, so they fire after an hour's point is in. Every balance also has an alarm at empty. Each number is at most 1440 (one day)."
+  type        = list(number)
+  default     = [240, 60, 20]
 
-variable "cpu_credit_percent" {
-  description = "Burstable classes only: alarm when the CPU credit balance falls below this percent of the most the class can bank."
-  type        = number
-  default     = 20
-}
+  validation {
+    condition     = alltrue([for m in var.minutes_of_warning : m > 0 && m <= 1440])
+    error_message = "Each number in minutes_of_warning must be more than 0 and at most 1440 (one day)."
+  }
 
-variable "burst_balance_percent" {
-  description = "Alarm when the EBS byte, EBS I/O or gp2 storage burst balance falls below this percent."
-  type        = number
-  default     = 20
+  validation {
+    condition     = length(var.minutes_of_warning) == length(distinct(var.minutes_of_warning))
+    error_message = "minutes_of_warning must not repeat a number."
+  }
 }
 
 variable "max_connections" {
@@ -61,6 +59,12 @@ variable "evaluation_minutes" {
   description = "How many minutes a metric must breach before the alarm fires. A metric that reports every 5 minutes is evaluated per 5-minute period, so the value is rounded up to a whole number of periods, and is never less than one period (5 minutes)."
   type        = number
   default     = 5
+}
+
+variable "actions_enabled" {
+  description = "Whether the alarms notify the topic. A new alarm moves from no data to OK, which would notify once per alarm, so a rollout can create them with false, wait until every alarm has a state, and set true."
+  type        = bool
+  default     = true
 }
 
 variable "tags" {

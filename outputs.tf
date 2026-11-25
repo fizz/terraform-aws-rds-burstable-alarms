@@ -9,6 +9,6 @@ output "alarm_names" {
 }
 
 output "thresholds" {
-  description = "Each alarm's threshold, after the class's memory and CPU credits are applied."
+  description = "Each alarm's threshold, after the class's memory and CPU credits are applied: bytes for freeable-memory, a count for connections, 1% of full in the metric's own unit for the balance alarms, and 1 for swap-usage and ebs-falls-while-swap-grows, whose expressions are 1 or 0."
   value       = { for k, a in local.alarms : k => a.threshold }
 }
