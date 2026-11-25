@@ -16,27 +16,20 @@ variable "alarm_emails" {
 }
 
 variable "freeable_memory_percent" {
-  description = "Alarm when free memory stays below this percent of the instance's memory. 10 is about 100 MB on a 1 GiB class."
+  description = "Alarm when free memory stays below this percent of the instance's memory. 10 is about 100 MB on a 1 GiB class. The swap alarm uses the same floor."
   type        = number
   default     = 10
 }
 
-variable "swap_usage_bytes" {
-  description = "Alarm when swap use goes above this many bytes."
-  type        = number
-  default     = 268435456
-}
-
-variable "cpu_credit_percent" {
-  description = "Burstable classes only: alarm when the CPU credit balance falls below this percent of the most the class can bank."
+variable "minutes_of_warning" {
+  description = "Alarm when a CPU credit, EBS byte, EBS I/O or gp2 burst balance will be at 1% of full or less in this many minutes at its present rate. The alarm fires only after evaluation_minutes of that, so the real warning is shorter by as much. At most 1440 (one day), because it carries one 5-minute rate that far forward."
   type        = number
   default     = 20
-}
 
-variable "burst_balance_percent" {
-  description = "Alarm when the EBS byte, EBS I/O or gp2 storage burst balance falls below this percent."
-  type        = number
-  default     = 20
+  validation {
+    condition     = var.minutes_of_warning > 0 && var.minutes_of_warning <= 1440
+    error_message = "minutes_of_warning must be more than 0 and at most 1440 (one day)."
+  }
 }
 
 variable "max_connections" {
