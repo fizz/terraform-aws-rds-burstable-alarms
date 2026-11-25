@@ -85,7 +85,7 @@ locals {
         period      = local.one_minute
         operator    = "LessThanThreshold"
         threshold   = local.memory_floor
-        description = "Free memory is below ${var.freeable_memory_percent}% of ${data.aws_db_instance.this.db_instance_class}. Each connection holds memory, and a small instance runs out of memory long before it runs out of connections."
+        description = "Free memory is below ${var.freeable_memory_percent}% of ${data.aws_db_instance.this.db_instance_class}. Each connection holds memory, and a burstable instance can run out of memory long before it runs out of connections."
       }
     },
     var.max_connections != null ? {

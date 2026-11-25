@@ -1,6 +1,6 @@
 # terraform-aws-rds-burstable-alarms
 
-Alarms for the small RDS instance that is about to fall over. Point it at a db.t4g.micro or any other class, and it watches the signals that come before a forced restart, not the ones that come after.
+Alarms for a burstable RDS instance, from a db.t4g.micro to a db.t3.2xlarge. The module watches the signals that come before a forced restart, not the ones that come after.
 
 ## Why
 
