@@ -24,6 +24,7 @@ locals {
   # leaves most periods empty, and an empty period counts as healthy.
   one_minute  = 60
   five_minute = 300
+  one_hour    = 3600
 
   # CPU credits a burstable class earns per hour. It banks at most 24 hours of them.
   # AWS does not publish these through an API.
@@ -78,7 +79,28 @@ locals {
   # A balance at or below 1% of full is spent.
   empty = { for k, b in local.balances : k => b.full / 100 }
 
+  # One alarm for each warning. A warning over an hour projects the hour's rate, because one
+  # 5-minute change carried that far is noise. It fires after the hour's point is in.
+  warnings = merge([
+    for k, b in local.balances : {
+      for m in var.minutes_of_warning : "${k}-${m}m" => {
+        balance = k
+        minutes = m
+        period  = m > 60 ? local.one_hour : local.five_minute
+      }
+    }
+  ]...)
+
   metric_alarms = merge(
+    {
+      for k, b in local.balances : "${k}-empty" => {
+        metric      = b.metric
+        period      = local.five_minute
+        operator    = "LessThanOrEqualToThreshold"
+        threshold   = local.empty[k]
+        description = trimspace("${b.name} is spent (${local.empty[k]}${b.unit} or less). ${b.note}")
+      }
+    },
     {
       freeable-memory = {
         metric      = "FreeableMemory"
@@ -102,20 +124,20 @@ locals {
   # Alarms on metric math: the input metrics by id, and one expression over them by id.
   math_alarms = merge(
     {
-      for k, b in local.balances : k => {
-        period    = local.five_minute
+      for key, w in local.warnings : key => {
+        period    = w.period
         operator  = "LessThanOrEqualToThreshold"
-        threshold = local.empty[k]
-        metrics   = { balance = { metric = b.metric, stat = "Minimum" } }
+        threshold = local.empty[w.balance]
+        metrics   = { balance = { metric = local.balances[w.balance].metric, stat = "Minimum" } }
 
-        # Where the balance will be in minutes_of_warning at its present rate, which RATE
+        # Where the balance will be in that many minutes at its present rate, which RATE
         # gives per second. Measured with GetMetricData: a metric that is never reported gives
         # no points, a period without a balance gives none, and a balance without a rate is
         # itself. Keep FILL and division out. FILL gives a metric that is never reported a
         # full series of points, an operation between two series counts the missing balance as
         # 0, and a 0 here pages.
-        expression  = { projected = "balance + RATE(balance) * ${var.minutes_of_warning * 60}" }
-        description = trimspace("${b.name} will be spent (${local.empty[k]}${b.unit} or less) within ${var.minutes_of_warning} minutes at its present rate, or is spent now. ${b.note}")
+        expression  = { projected = "balance + RATE(balance) * ${w.minutes * 60}" }
+        description = trimspace("${local.balances[w.balance].name} will be spent (${local.empty[w.balance]}${local.balances[w.balance].unit} or less) within ${w.minutes} minutes at its present rate, or is spent now. ${local.balances[w.balance].note}")
       }
     },
     {
@@ -130,6 +152,20 @@ locals {
         }
         expression  = { swapping = "IF(free < ${local.memory_floor} AND RATE(swap) > 0, 1, 0)" }
         description = "Swap is growing while free memory is below ${var.freeable_memory_percent}% of ${data.aws_db_instance.this.db_instance_class}, so the instance is short of memory now."
+      }
+
+      # Two resources going at once, over the hour: the low of EBS and the high of swap. The
+      # limits come from two incidents and were not tuned on quiet days.
+      ebs-falls-while-swap-grows = {
+        period    = local.one_hour
+        operator  = "GreaterThanOrEqualToThreshold"
+        threshold = 1
+        metrics = {
+          ebs  = { metric = "EBSByteBalance%", stat = "Minimum" }
+          swap = { metric = "SwapUsage", stat = "Maximum" }
+        }
+        expression  = { together = "IF(RATE(ebs) * 3600 < -10 AND RATE(swap) * 3600 > 25000000, 1, 0)" }
+        description = "The EBS throughput burst fell by more than 10 points in an hour while swap grew by more than 25 MB, so the instance is losing more than one resource."
       }
     },
   )
@@ -205,7 +241,7 @@ resource "aws_cloudwatch_metric_alarm" "this" {
   metric_name = local.is_math[each.key] ? null : each.value.metric
   dimensions  = local.is_math[each.key] ? null : local.dimension
   period      = local.is_math[each.key] ? null : each.value.period
-  statistic   = local.is_math[each.key] ? null : (each.value.operator == "LessThanThreshold" ? "Minimum" : "Maximum")
+  statistic   = local.is_math[each.key] ? null : (startswith(each.value.operator, "LessThan") ? "Minimum" : "Maximum")
 
   dynamic "metric_query" {
     for_each = local.is_math[each.key] ? each.value.metrics : {}
@@ -236,6 +272,10 @@ resource "aws_cloudwatch_metric_alarm" "this" {
 
   # A metric the class or volume does not report must not page anyone.
   treat_missing_data = "notBreaching"
+
+  # False creates the alarms silent, so they can settle before they notify anyone. Enabling
+  # them later sends nothing by itself, because no alarm changes state.
+  actions_enabled = var.actions_enabled
 
   alarm_actions = [local.topic_arn]
   ok_actions    = [local.topic_arn]

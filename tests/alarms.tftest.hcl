@@ -42,6 +42,7 @@ mock_provider "aws" {
 variables {
   db_instance_identifier = "app-db"
   alarm_emails           = ["ops@example.com"]
+  minutes_of_warning     = [20]
 }
 
 run "micro_gets_memory_swap_burst_and_credit_alarms" {
@@ -49,10 +50,11 @@ run "micro_gets_memory_swap_burst_and_credit_alarms" {
 
   assert {
     condition = toset(keys(aws_cloudwatch_metric_alarm.this)) == toset([
-      "freeable-memory", "swap-usage", "ebs-byte-balance", "ebs-io-balance",
-      "storage-burst-balance", "cpu-credit-balance",
+      "freeable-memory", "swap-usage", "ebs-falls-while-swap-grows",
+      "ebs-byte-balance-20m", "ebs-io-balance-20m", "storage-burst-balance-20m", "cpu-credit-balance-20m",
+      "ebs-byte-balance-empty", "ebs-io-balance-empty", "storage-burst-balance-empty", "cpu-credit-balance-empty",
     ])
-    error_message = "A t4g.micro gets six alarms, and no connections alarm without max_connections."
+    error_message = "With one warning a t4g.micro gets eleven alarms, and no connections alarm without max_connections."
   }
 
   assert {
@@ -61,13 +63,13 @@ run "micro_gets_memory_swap_burst_and_credit_alarms" {
   }
 
   assert {
-    condition     = output.thresholds["cpu-credit-balance"] == 2.88
+    condition     = output.thresholds["cpu-credit-balance-20m"] == 2.88
     error_message = "A micro banks 12 x 24 = 288 credits; 1% is 2.88."
   }
 
   assert {
     condition = alltrue([
-      for k in ["ebs-byte-balance", "ebs-io-balance", "storage-burst-balance", "swap-usage"] : output.thresholds[k] == 1
+      for k in ["ebs-byte-balance-20m", "ebs-io-balance-20m", "storage-burst-balance-20m", "swap-usage"] : output.thresholds[k] == 1
     ])
     error_message = "1% of a percent balance is 1, and the swap expression is 1 or 0."
   }
@@ -92,7 +94,7 @@ run "memory_threshold_follows_the_class" {
   }
 
   assert {
-    condition     = output.thresholds["cpu-credit-balance"] == 5.76
+    condition     = output.thresholds["cpu-credit-balance-20m"] == 5.76
     error_message = "A small banks 24 x 24 = 576 credits; 1% is 5.76."
   }
 }
@@ -111,13 +113,13 @@ run "non_burstable_class_has_no_credit_alarm" {
   }
 
   assert {
-    condition     = !contains(keys(aws_cloudwatch_metric_alarm.this), "cpu-credit-balance")
+    condition     = !contains(keys(aws_cloudwatch_metric_alarm.this), "cpu-credit-balance-20m")
     error_message = "An m7g earns no CPU credits."
   }
 
   assert {
     condition = alltrue([
-      for k in ["ebs-byte-balance", "ebs-io-balance", "swap-usage"] :
+      for k in ["ebs-byte-balance-20m", "ebs-io-balance-20m", "swap-usage"] :
       contains(keys(aws_cloudwatch_metric_alarm.this), k)
     ])
     error_message = "The EBS balance and swap alarms do not depend on CPU credits."
@@ -156,7 +158,7 @@ run "lows_use_minimum_and_highs_use_maximum" {
 
   assert {
     condition = alltrue(flatten([
-      for k in ["cpu-credit-balance", "ebs-byte-balance", "ebs-io-balance", "storage-burst-balance"] : [
+      for k in ["cpu-credit-balance-20m", "ebs-byte-balance-20m", "ebs-io-balance-20m", "storage-burst-balance-20m"] : [
         for q in aws_cloudwatch_metric_alarm.this[k].metric_query : q.metric[0].stat == "Minimum" if q.id == "balance"
       ]
     ]))
@@ -211,7 +213,7 @@ run "math_alarms_use_a_five_minute_period" {
 
   assert {
     condition = alltrue(flatten([
-      for k in ["cpu-credit-balance", "ebs-byte-balance", "ebs-io-balance", "storage-burst-balance", "swap-usage"] : [
+      for k in ["cpu-credit-balance-20m", "ebs-byte-balance-20m", "ebs-io-balance-20m", "storage-burst-balance-20m", "swap-usage"] : [
         for q in aws_cloudwatch_metric_alarm.this[k].metric_query : q.metric[0].period == 300 if q.expression == null
       ]
     ]))
@@ -228,7 +230,7 @@ run "math_alarms_use_a_five_minute_period" {
 
   assert {
     condition = alltrue([
-      for k in ["cpu-credit-balance", "ebs-byte-balance", "ebs-io-balance", "storage-burst-balance", "swap-usage"] :
+      for k in ["cpu-credit-balance-20m", "ebs-byte-balance-20m", "ebs-io-balance-20m", "storage-burst-balance-20m", "swap-usage"] :
       aws_cloudwatch_metric_alarm.this[k].evaluation_periods == 1 && aws_cloudwatch_metric_alarm.this[k].datapoints_to_alarm == 1
     ])
     error_message = "The default 5 minutes is one 5-minute period."
@@ -252,7 +254,7 @@ run "evaluation_minutes_rounds_up_to_whole_periods" {
   }
 
   assert {
-    condition     = aws_cloudwatch_metric_alarm.this["cpu-credit-balance"].evaluation_periods == 2 && aws_cloudwatch_metric_alarm.this["cpu-credit-balance"].datapoints_to_alarm == 2
+    condition     = aws_cloudwatch_metric_alarm.this["cpu-credit-balance-20m"].evaluation_periods == 2 && aws_cloudwatch_metric_alarm.this["cpu-credit-balance-20m"].datapoints_to_alarm == 2
     error_message = "7 minutes on a 5-minute metric is two periods."
   }
 
@@ -270,7 +272,7 @@ run "evaluation_minutes_below_one_period_is_one_period" {
   }
 
   assert {
-    condition     = aws_cloudwatch_metric_alarm.this["ebs-io-balance"].evaluation_periods == 1 && aws_cloudwatch_metric_alarm.this["ebs-io-balance"].datapoints_to_alarm == 1
+    condition     = aws_cloudwatch_metric_alarm.this["ebs-io-balance-20m"].evaluation_periods == 1 && aws_cloudwatch_metric_alarm.this["ebs-io-balance-20m"].datapoints_to_alarm == 1
     error_message = "A 5-minute metric cannot be evaluated over less than one period."
   }
 
@@ -285,7 +287,7 @@ run "balance_alarms_project_the_balance" {
 
   assert {
     condition = alltrue([
-      for k in ["cpu-credit-balance", "ebs-byte-balance", "ebs-io-balance", "storage-burst-balance"] :
+      for k in ["cpu-credit-balance-20m", "ebs-byte-balance-20m", "ebs-io-balance-20m", "storage-burst-balance-20m"] :
       one([for q in aws_cloudwatch_metric_alarm.this[k].metric_query : q.expression if q.return_data]) == "balance + RATE(balance) * 1200"
     ])
     error_message = "RATE is per second, so 20 minutes is 1200 of them, in percent and in credits alike."
@@ -293,13 +295,13 @@ run "balance_alarms_project_the_balance" {
 
   assert {
     condition = {
-      for k in ["cpu-credit-balance", "ebs-byte-balance", "ebs-io-balance", "storage-burst-balance"] :
+      for k in ["cpu-credit-balance-20m", "ebs-byte-balance-20m", "ebs-io-balance-20m", "storage-burst-balance-20m"] :
       k => one([for q in aws_cloudwatch_metric_alarm.this[k].metric_query : q.metric[0].metric_name if q.id == "balance"])
       } == {
-      cpu-credit-balance    = "CPUCreditBalance"
-      ebs-byte-balance      = "EBSByteBalance%"
-      ebs-io-balance        = "EBSIOBalance%"
-      storage-burst-balance = "BurstBalance"
+      cpu-credit-balance-20m    = "CPUCreditBalance"
+      ebs-byte-balance-20m      = "EBSByteBalance%"
+      ebs-io-balance-20m        = "EBSIOBalance%"
+      storage-burst-balance-20m = "BurstBalance"
     }
     error_message = "Each balance alarm reads its own metric."
   }
@@ -313,12 +315,17 @@ run "math_alarms_compare_one_returned_expression" {
       for k, a in aws_cloudwatch_metric_alarm.this :
       k => [for q in a.metric_query : q.id if q.return_data]
       } == {
-      freeable-memory       = []
-      swap-usage            = ["swapping"]
-      cpu-credit-balance    = ["projected"]
-      ebs-byte-balance      = ["projected"]
-      ebs-io-balance        = ["projected"]
-      storage-burst-balance = ["projected"]
+      freeable-memory             = []
+      swap-usage                  = ["swapping"]
+      ebs-falls-while-swap-grows  = ["together"]
+      cpu-credit-balance-20m      = ["projected"]
+      ebs-byte-balance-20m        = ["projected"]
+      ebs-io-balance-20m          = ["projected"]
+      storage-burst-balance-20m   = ["projected"]
+      cpu-credit-balance-empty    = []
+      ebs-byte-balance-empty      = []
+      ebs-io-balance-empty        = []
+      storage-burst-balance-empty = []
     }
     error_message = "A math alarm returns its one expression, and nothing else."
   }
@@ -327,7 +334,7 @@ run "math_alarms_compare_one_returned_expression" {
     condition = alltrue([
       for k, a in aws_cloudwatch_metric_alarm.this :
       a.metric_name == null && a.namespace == null && a.statistic == null && a.period == null && a.dimensions == null
-      if k != "freeable-memory"
+      if k != "freeable-memory" && !endswith(k, "-empty")
     ])
     error_message = "A math alarm has no metric of its own."
   }
@@ -351,20 +358,20 @@ run "spent_balance_alarms_when_its_rate_is_zero" {
 
   assert {
     condition = {
-      for k in ["cpu-credit-balance", "ebs-byte-balance", "ebs-io-balance", "storage-burst-balance"] :
+      for k in ["cpu-credit-balance-20m", "ebs-byte-balance-20m", "ebs-io-balance-20m", "storage-burst-balance-20m"] :
       k => "${aws_cloudwatch_metric_alarm.this[k].comparison_operator} ${aws_cloudwatch_metric_alarm.this[k].threshold}"
       } == {
-      cpu-credit-balance    = "LessThanOrEqualToThreshold 2.88"
-      ebs-byte-balance      = "LessThanOrEqualToThreshold 1"
-      ebs-io-balance        = "LessThanOrEqualToThreshold 1"
-      storage-burst-balance = "LessThanOrEqualToThreshold 1"
+      cpu-credit-balance-20m    = "LessThanOrEqualToThreshold 2.88"
+      ebs-byte-balance-20m      = "LessThanOrEqualToThreshold 1"
+      ebs-io-balance-20m        = "LessThanOrEqualToThreshold 1"
+      storage-burst-balance-20m = "LessThanOrEqualToThreshold 1"
     }
     error_message = "A balance at or below 1% of full breaches."
   }
 
   assert {
     condition = alltrue([
-      for k in ["cpu-credit-balance", "ebs-byte-balance", "ebs-io-balance", "storage-burst-balance"] :
+      for k in ["cpu-credit-balance-20m", "ebs-byte-balance-20m", "ebs-io-balance-20m", "storage-burst-balance-20m"] :
       startswith(one([for q in aws_cloudwatch_metric_alarm.this[k].metric_query : q.expression if q.return_data]), "balance + RATE(balance)")
     ])
     error_message = "The balance is a term of its own, with no condition on its rate."
@@ -375,16 +382,16 @@ run "longest_warning_does_not_move_the_threshold" {
   command = plan
 
   variables {
-    minutes_of_warning = 1440
+    minutes_of_warning = [1440]
   }
 
   assert {
-    condition     = one([for q in aws_cloudwatch_metric_alarm.this["ebs-byte-balance"].metric_query : q.expression if q.return_data]) == "balance + RATE(balance) * 86400"
+    condition     = one([for q in aws_cloudwatch_metric_alarm.this["ebs-byte-balance-1440m"].metric_query : q.expression if q.return_data]) == "balance + RATE(balance) * 86400"
     error_message = "1440 minutes is 86400 seconds."
   }
 
   assert {
-    condition     = output.thresholds["ebs-byte-balance"] == 1
+    condition     = output.thresholds["ebs-byte-balance-1440m"] == 1
     error_message = "A flat balance above 1% is quiet at any warning."
   }
 }
@@ -405,8 +412,8 @@ run "expressions_have_no_fill_and_no_division" {
   }
 
   assert {
-    condition     = sum([for a in aws_cloudwatch_metric_alarm.this : length([for q in a.metric_query : q if q.expression != null])]) == 5
-    error_message = "Four balances and swap have one expression each, so the check above read five."
+    condition     = sum([for a in aws_cloudwatch_metric_alarm.this : length([for q in a.metric_query : q if q.expression != null])]) == 6
+    error_message = "Four balances, swap and the combined alarm have one expression each, so the check above read six."
   }
 
   assert {
@@ -429,17 +436,17 @@ run "large_burstable_class_scales_credits_and_memory" {
   }
 
   assert {
-    condition     = output.thresholds["cpu-credit-balance"] == 46.08
+    condition     = output.thresholds["cpu-credit-balance-20m"] == 46.08
     error_message = "A 2xlarge banks 192 x 24 = 4608 credits; 1% is 46.08."
   }
 
   assert {
-    condition     = output.thresholds["ebs-byte-balance"] == 1
+    condition     = output.thresholds["ebs-byte-balance-20m"] == 1
     error_message = "A percent balance does not depend on the class."
   }
 
   assert {
-    condition     = one([for q in aws_cloudwatch_metric_alarm.this["cpu-credit-balance"].metric_query : q.expression if q.return_data]) == "balance + RATE(balance) * 1200"
+    condition     = one([for q in aws_cloudwatch_metric_alarm.this["cpu-credit-balance-20m"].metric_query : q.expression if q.return_data]) == "balance + RATE(balance) * 1200"
     error_message = "The class moves the threshold, not the expression."
   }
 
@@ -458,7 +465,7 @@ run "gp2_volume_gets_a_storage_burst_alarm" {
   command = plan
 
   assert {
-    condition     = contains(keys(aws_cloudwatch_metric_alarm.this), "storage-burst-balance")
+    condition     = contains(keys(aws_cloudwatch_metric_alarm.this), "storage-burst-balance-20m")
     error_message = "A gp2 volume has a burst balance."
   }
 }
@@ -473,13 +480,15 @@ run "gp3_volume_gets_no_storage_burst_alarm" {
 
   assert {
     condition = toset(keys(aws_cloudwatch_metric_alarm.this)) == toset([
-      "freeable-memory", "swap-usage", "ebs-byte-balance", "ebs-io-balance", "cpu-credit-balance",
+      "freeable-memory", "swap-usage", "ebs-falls-while-swap-grows",
+      "ebs-byte-balance-20m", "ebs-io-balance-20m", "cpu-credit-balance-20m",
+      "ebs-byte-balance-empty", "ebs-io-balance-empty", "cpu-credit-balance-empty",
     ])
     error_message = "A gp3 volume has no burst balance, and keeps every other alarm."
   }
 
   assert {
-    condition     = !contains(keys(output.thresholds), "storage-burst-balance") && !contains(keys(output.alarm_names), "storage-burst-balance")
+    condition     = !contains(keys(output.thresholds), "storage-burst-balance-20m") && !contains(keys(output.alarm_names), "storage-burst-balance-20m")
     error_message = "The outputs list only alarms that exist."
   }
 }
@@ -523,12 +532,12 @@ run "minutes_of_warning_sets_every_balance_alarm" {
   command = plan
 
   variables {
-    minutes_of_warning = 45
+    minutes_of_warning = [45]
   }
 
   assert {
     condition = alltrue([
-      for k in ["cpu-credit-balance", "ebs-byte-balance", "ebs-io-balance", "storage-burst-balance"] :
+      for k in ["cpu-credit-balance-45m", "ebs-byte-balance-45m", "ebs-io-balance-45m", "storage-burst-balance-45m"] :
       one([for q in aws_cloudwatch_metric_alarm.this[k].metric_query : q.expression if q.return_data]) == "balance + RATE(balance) * 2700"
     ])
     error_message = "One input sets the four balance alarms."
@@ -536,12 +545,17 @@ run "minutes_of_warning_sets_every_balance_alarm" {
 
   assert {
     condition = output.thresholds == {
-      freeable-memory       = 107374182
-      swap-usage            = 1
-      cpu-credit-balance    = 2.88
-      ebs-byte-balance      = 1
-      ebs-io-balance        = 1
-      storage-burst-balance = 1
+      freeable-memory             = 107374182
+      swap-usage                  = 1
+      ebs-falls-while-swap-grows  = 1
+      cpu-credit-balance-45m      = 2.88
+      ebs-byte-balance-45m        = 1
+      ebs-io-balance-45m          = 1
+      storage-burst-balance-45m   = 1
+      cpu-credit-balance-empty    = 2.88
+      ebs-byte-balance-empty      = 1
+      ebs-io-balance-empty        = 1
+      storage-burst-balance-empty = 1
     }
     error_message = "It moves no threshold."
   }
@@ -551,12 +565,12 @@ run "balance_descriptions_say_the_warning_and_the_unit" {
   command = plan
 
   assert {
-    condition     = aws_cloudwatch_metric_alarm.this["cpu-credit-balance"].alarm_description == "The CPU credit balance will be spent (2.88 credits or less) within 20 minutes at its present rate, or is spent now. A db.t4g.micro can bank 288."
+    condition     = aws_cloudwatch_metric_alarm.this["cpu-credit-balance-20m"].alarm_description == "The CPU credit balance will be spent (2.88 credits or less) within 20 minutes at its present rate, or is spent now. A db.t4g.micro can bank 288."
     error_message = "Credits are a count."
   }
 
   assert {
-    condition     = aws_cloudwatch_metric_alarm.this["ebs-io-balance"].alarm_description == "The instance's EBS I/O burst will be spent (1% or less) within 20 minutes at its present rate, or is spent now."
+    condition     = aws_cloudwatch_metric_alarm.this["ebs-io-balance-20m"].alarm_description == "The instance's EBS I/O burst will be spent (1% or less) within 20 minutes at its present rate, or is spent now."
     error_message = "EBS balances are percents."
   }
 }
@@ -565,11 +579,11 @@ run "minutes_of_warning_takes_less_than_a_minute" {
   command = plan
 
   variables {
-    minutes_of_warning = 0.5
+    minutes_of_warning = [0.5]
   }
 
   assert {
-    condition     = one([for q in aws_cloudwatch_metric_alarm.this["ebs-byte-balance"].metric_query : q.expression if q.return_data]) == "balance + RATE(balance) * 30"
+    condition     = one([for q in aws_cloudwatch_metric_alarm.this["ebs-byte-balance-0.5m"].metric_query : q.expression if q.return_data]) == "balance + RATE(balance) * 30"
     error_message = "Any positive number is accepted, and half a minute is 30 seconds."
   }
 }
@@ -578,7 +592,7 @@ run "minutes_of_warning_rejects_zero" {
   command = plan
 
   variables {
-    minutes_of_warning = 0
+    minutes_of_warning = [0]
   }
 
   expect_failures = [var.minutes_of_warning]
@@ -588,7 +602,7 @@ run "minutes_of_warning_rejects_a_negative" {
   command = plan
 
   variables {
-    minutes_of_warning = -20
+    minutes_of_warning = [-20]
   }
 
   expect_failures = [var.minutes_of_warning]
@@ -598,7 +612,7 @@ run "minutes_of_warning_rejects_more_than_a_day" {
   command = plan
 
   variables {
-    minutes_of_warning = 1441
+    minutes_of_warning = [1441]
   }
 
   expect_failures = [var.minutes_of_warning]
